@@ -24,6 +24,8 @@ import sqlite3
 import xml.dom.minidom
 from xml.dom.minidom import getDOMImplementation
 from time import gmtime, strftime
+from xml.etree import ElementTree as ET
+import html
 
 class JMeterKeywords(object):
     def runJmeter(self, jmeterPath, testPlanPath, logFilePath, otherParams=""):
@@ -107,6 +109,32 @@ class JMeterKeywords(object):
         lai = LogAnalysisInitiator(logFilePath, createHtmlReport=True, disableReports=disableReports)
         return lai.getReturnStructure()
 
+    def runJmeterAnalyseJtlConvertToRFXml(self, jmeterPath, testPlanPath, logFilePath, otherParams="", disableReports=None):
+        """
+        Runs JMeter and parses log file. Converts results into html format.
+        Returns list of dictionaries containing summary report of parsed output.
+        Parameters:
+            - jmeterPath - path to JMeter executable file
+            - testPlanPath - path to jmx file
+            - logFilePath - path to a log file
+            - otherParams (optional) - other parameters to be called
+            - disableReports - optional paramter for disabling particular parts of html report.
+             It requires integer value which is composed of bits which meaning is
+             as follows (binary numebers in Python notation):
+    			 0b00000001 -> disable aggregated report and graph;
+    			 0b00000010 -> disable aggregated samples;
+    			 0b00000100 -> disable response time graph;
+    			 0b00001000 -> disable all samples;
+              For example disabling aggr samples and resp time graph needs 0b00000110 which is integer 6.
+        Examples:
+        | run jmeter analyse jtl convert to html | D:/apache-jmeter-2.12/bin/jmeter.bat | D:/Tests/Test1Thread1Loop.jmx | D:/Tests/output1.jtl |
+        | run jmeter analyse jtl convert to html | D:/apache-jmeter-2.12/bin/jmeter.bat | D:/Tests/Test1Thread1Loop.jmx | D:/Tests/output1.jtl | -H my.proxy.server -P 8000 |
+        """
+        JMeterRunner(jmeterPath, testPlanPath, logFilePath, otherParams)
+        lai = LogAnalysisInitiator(logFilePath, createHtmlReport=True, disableReports=disableReports)
+        return lai.getReturnStructure()
+
+
     def runJmeterAnalyseJtl(self, jmeterPath, testPlanPath, logFilePath, otherParams=""):
         """
         Runs JMeter and parses log file.
@@ -141,7 +169,7 @@ class JMeterKeywords(object):
         Examples:
         | analyse jtl convert | D:/Tests/output1.jtl |
         """
-        lai = LogAnalysisInitiator(logFilePath, True, True, disableReports=disableReports)
+        lai = LogAnalysisInitiator(logFilePath, True, True, True, disableReports=disableReports)
         return lai.getReturnStructure()
 
     def analyseJtlConvertToDb(self, logFilePath):
@@ -174,6 +202,26 @@ class JMeterKeywords(object):
         | analyse jtl convert to html | D:/Tests/output1.jtl |
         """
         lai = LogAnalysisInitiator(logFilePath, createHtmlReport=True, disableReports=disableReports)
+        return lai.getReturnStructure()
+
+    def analyseJtlConvertToRFXml(self, logFilePath):
+        """
+        Parses JMeter log file. Converts results into HTML format.
+        Returns list of dictionaries containing summary report of parsed output.
+        Parameters:
+            - logFilePath - path to a log file
+            - disableReports - optional paramter for disabling particular parts of html report.
+             It requires integer value which is composed of bits which meaning is
+             as follows (binary numebers in Python notation):
+    			 0b00000001 -> disable aggregated report and graph;
+    			 0b00000010 -> disable aggregated samples;
+    			 0b00000100 -> disable response time graph;
+    			 0b00001000 -> disable all samples;
+              For example disabling aggr samples and resp time graph needs 0b00000110 which is integer 6.
+        Examples:
+        | analyse jtl convert to html | D:/Tests/output1.jtl |
+        """
+        lai = LogAnalysisInitiator(logFilePath, createXmlReport=True)
         return lai.getReturnStructure()
 
     def analyseJtl(self, logFilePath):
@@ -241,7 +289,7 @@ class JMeterLibException(Exception):
          return repr(self.msg)
 
 class LogAnalysisInitiator(object):
-    def __init__(self, filePath, createSqlReport=False, createHtmlReport=False, disableReports=None):
+    def __init__(self, filePath, createSqlReport=False, createHtmlReport=False, createXmlReport=False, disableReports=None):
         debugNeeded = False
         self.jtlPath = filePath
         self.timeStamp = str(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -258,6 +306,8 @@ class LogAnalysisInitiator(object):
             self.convertLogToHtml(disableReports)
         if createSqlReport:
             self.convertLogToSql()
+        if createXmlReport:
+            self.convertLogToXml()
 
     def recognizeFormat(self, fileLines):
         logFileFormat = ""
@@ -299,6 +349,11 @@ class LogAnalysisInitiator(object):
         self.lc = LogConverterHtml(self, disableReports=disableReports)
         self.lc.createNewHtmlPath()
         self.lc.createHtml(disableReports)
+
+    def convertLogToXml(self):
+        self.ls = LogConverterXml(self)
+        self.ls.createXml()
+        return self.ls.newxmlLogPath
 
     def convertLogToSql(self):
         self.ls = LogConverterSql(self)
@@ -472,7 +527,8 @@ class XmlLogAnalyser(LogAnalyser):
             xmlLog = xml.dom.minidom.parse(self.filePath)
         except IOError:
             print("ERROR, problems while reading " + str(self.filePath))
-        except xml.parsers.expat.ExpatError:
+        except xml.parsers.expat.ExpatError as e:
+            print(e)
             print("ERROR, problems while parsing xml")
         else:
             testResultNodes = xmlLog.getElementsByTagName("testResults")
@@ -501,12 +557,20 @@ class XmlLogAnalyser(LogAnalyser):
                             for a in assertNodes:
                                 newAssertion = None
                                 if isinstance(a, xml.dom.minidom.Element):
-                                    nameTagString = self.getAssertionFields("name", a)
-                                    failureTagString = self.getAssertionFields("failure", a)
-                                    failureMessageTagString = self.getAssertionFields("failureMessage", a)
-                                    errorTagString = self.getAssertionFields("error", a)
-                                    newAssertion = Assertion(name=nameTagString, failure=failureTagString, failureMessage=failureMessageTagString, error=errorTagString)
-                                    newSample.addAssertion(newAssertion)
+                                    if a.nodeName == "assertionResult":
+                                      nameTagString = self.getAssertionFields("name", a)
+                                      failureTagString = self.getAssertionFields("failure", a)
+                                      failureMessageTagString = self.getAssertionFields("failureMessage", a)
+                                      errorTagString = self.getAssertionFields("error", a)
+                                      newAssertion = Assertion(name=nameTagString, failure=failureTagString, failureMessage=failureMessageTagString, error=errorTagString)
+                                      newSample.addAssertion(newAssertion)
+                                    elif a.nodeName == "responseData":
+                                        ResponseData = ""
+                                        for name in a.childNodes:
+                                            ResponseData += name.nodeValue
+
+                                        newSample.setResponseData(ResponseData.replace('\r',''))
+
                             if isinstance(newSample, Sample) or isinstance(newSample, Sample2):
                                 self.samples.append(newSample)
         if len(self.samples) <= 0:
@@ -541,6 +605,7 @@ class XmlLogAnalyser(LogAnalyser):
 class Sample(object):
     def __init__(self, **values):
         self.assertions = []
+        self.responseData = ""
         if 'ts' in values:
             self.setStartTime(values['ts'])
         if 't' in values:
@@ -627,6 +692,12 @@ class Sample(object):
 
     def getAssertions(self):
         return self.assertions
+
+    def setResponseData(self, responseData):
+        self.responseData = responseData
+
+    def getResponseData(self):
+        return self.responseData
 
 class Sample2(Sample):
     def __init__(self, **values):
@@ -1937,3 +2008,86 @@ Website: http://sourceforge.net/projects/rf-jmeter-py/
 </td>
 <td></tr></table></div>
         '''
+        
+class LogConverterXml(object):
+    def __init__(self, parentHandler):
+        self.loganalyser = parentHandler
+        self.logPath = parentHandler.jtlPath
+        self.createNewXmlPath()
+        print(self.loganalyser.samples)
+        # self.predefineHtml()
+        # self.customizeNaviBar(disableReports)
+        # self.printDetails = False
+
+    def createNewXmlPath(self):
+        self.newxmlLogPath = self.logPath + ".xml"
+        while os.path.isfile(self.newxmlLogPath):
+            self.newxmlLogPath = self.logPath + strftime("%Y%m%d%H%M%S", gmtime()) + ".xml"
+
+    def saveDataToXml(self,data):
+        try:
+            data.write(self.newxmlLogPath, encoding="utf-8", xml_declaration=True)
+        except IOError:
+            print("ERROR, problems while writing " + str(self.newxmlLogPath))
+
+    def createXml(self):
+        root = ET.Element("robot", {"generator": "Robot 3.1.1 (Python 3.6.8 on win32)", "rpa": "false"})
+        suiteid = 1
+        tableOfSamples = self.loganalyser.samples
+        root.set("generated", str(datetime.datetime.fromtimestamp(int(tableOfSamples[0].getStartTime()) / 1e3).strftime("%Y%m%d %H:%M:%S.%f")))
+        suite_begin = ET.Element("suite",
+                           {"id": "s1", "name":"小黑鱼", "source": "testResults"})
+        root.append(suite_begin)
+        print("Creating RF_xml " + self.newxmlLogPath)
+        testid = 1
+        suite_status = "PASS"
+        for samplei in tableOfSamples:
+            suite = root.find(".//suite[@name='" + samplei.getThreadName() + "']")
+            if suite is None:
+                suite = ET.Element("suite", {"id": suite_begin.get('id')+"-s"+str(suiteid), "name": samplei.getThreadName(), "source": "testResults"})
+                suiteid +=1
+                testid = 1
+                suite_begin.append(suite)
+            if samplei.getStatus() == 'true':
+                testcase_status = "PASS"
+            else:
+                testcase_status = "FAIL"
+            end_time = str(datetime.datetime.fromtimestamp((int(samplei.getStartTime())+int(samplei.getSampleTime())) / 1e3).strftime("%Y%m%d %H:%M:%S.%f"))
+            begin_time = str(datetime.datetime.fromtimestamp(int(samplei.getStartTime()) / 1e3).strftime("%Y%m%d %H:%M:%S.%f"))
+            test = ET.Element("test", {"id": suite.get('id')+"-t"+str(testid), "name":samplei.getLabel()})
+            teststatus = ET.Element("status", {'critical':'yes',"endtime": end_time,"starttime":begin_time,"status":testcase_status})
+            # kw中的基础信息
+            kw_base = ET.Element("kw", {"library": "BuiltIn", "name":"JemterBase"})
+            kw_message_rc = ET.Element("msg", {"level": "INFO", "timestamp":begin_time})
+            kw_message_rc.text = "返回的响应码:"+samplei.getRespCode()
+            kw_message_rm = ET.Element("msg", {"level": "INFO", "timestamp": begin_time})
+            kw_message_rm.text = "响应信息:" + samplei.getRespMsg()
+            kw_status = ET.Element("status", { "endtime": end_time, "starttime": begin_time,
+                                               "status": "PASS"})
+            kw_base.append(kw_message_rc)
+            kw_base.append(kw_message_rm)
+            kw_base.append(kw_status)
+            test.append(kw_base)
+            # kw中错误信息
+            if testcase_status !="PASS":
+                kw_error = ET.Element("kw", {"library": "BuiltIn", "name": "错误信息"})
+                for Assert in samplei.getAssertions():
+                    kw_error_name = ET.Element("msg", {"level": "INFO", "timestamp": begin_time})
+                    kw_error_name.text = "名称：" + Assert.getName()+",失败："+ Assert.getFailure()+",失败原因："+  html.unescape(Assert.getFailureMsg())+ ",错误：" + Assert.getError()
+                    kw_error.append(kw_error_name)
+                kw_error_ResponseData= ET.Element("msg", {"level": "INFO", "timestamp": begin_time})
+                kw_error_ResponseData.text = "ResponseData:" + html.unescape(samplei.getResponseData())
+                kw_error.append(kw_error_ResponseData)
+                kw_error_status = ET.Element("status", {"endtime": end_time, "starttime": begin_time,
+                                                  "status": "FAIL"})
+                kw_error.append(kw_error_status)
+                test.append(kw_error)
+            test.append(teststatus)
+            testid +=1
+            suite.append(test)
+        tree = ET.ElementTree(root)
+        self.saveDataToXml(tree)
+
+if __name__ == '__main__':
+    jm = JMeterKeywords()
+    jm.analyseJtlConvert("C:/work/Test2.jtl")
