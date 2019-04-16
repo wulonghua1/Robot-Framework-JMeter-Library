@@ -279,7 +279,7 @@ class LogAnalysisInitiator(object):
         newFileLines = []
         print("Opening log file " + self.jtlPath)
         try:
-            logFileHandler = open(self.jtlPath, 'r')
+            logFileHandler = open(self.jtlPath, 'r',encoding='utf-8')
             newFileLines = logFileHandler.readlines()
             logFileHandler.close()
         except IOError:
@@ -417,10 +417,10 @@ class LogAnalyser(object):
 
 class CsvLogAnalyser(LogAnalyser):
     def getSamples(self):
-        print("Extracting samples and assertions from " + self.filePath)
+        print("Extracting samples and assertions from CVS " + self.filePath)
         self.samples = []
         try:
-            with open(self.filePath, "r") as csvfile:
+            with open(self.filePath, "r",encoding='utf-8') as csvfile:
                 csvReader = csv.reader(csvfile, delimiter=",", quoting=csv.QUOTE_ALL, quotechar="\"")
                 header_found = False
                 counter = 0
@@ -758,7 +758,8 @@ class AggregatedSummary(object):
         return self.assertionPassRate
 
     def addAverageTime(self, t):
-        if isinstance(t, str) or isinstance(t, unicode):
+        # if isinstance(t, str) or isinstance(t, unicode):
+        if isinstance(t, str):
             t = int(t)
         self.averageTime += t
 
@@ -888,7 +889,8 @@ class AggregatedSamples(AggregatedSummary):
         return self.throughput
 
     def addAverageBytes(self, b):
-        if isinstance(b, str) or isinstance(b, unicode):
+        # if isinstance(b, str) or isinstance(b, unicode):
+        if isinstance(b, str):
             b = int(b)
         self.averageBytes = self.averageBytes + b
         self.addBytesPerSec(b)
@@ -1222,7 +1224,8 @@ class LogConverterHtml(object):
 
     def createHtml(self, disableReports):
         tableOfSamples = self.loganalyser.samples
-        if isinstance(disableReports, unicode):
+        # if isinstance(disableReports, unicode):
+        if isinstance(disableReports, str):
             disableReports = int(disableReports)
         if not isinstance(disableReports, int):
             disableReports = 0
@@ -1887,7 +1890,8 @@ Website: http://sourceforge.net/projects/rf-jmeter-py/
         }
 
     def customizeNaviBar(self, reportOptions):
-        if isinstance(reportOptions, unicode):
+        # if isinstance(reportOptions, unicode):
+        if isinstance(reportOptions, str):
             reportOptions = int(reportOptions)
         if not isinstance(reportOptions, int):
             reportOptions = 0
